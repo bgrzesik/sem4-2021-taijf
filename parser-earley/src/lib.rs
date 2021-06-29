@@ -82,8 +82,8 @@ impl <'l, T: Token> ParserStep<'l, T> {
     }
 }
 
-fn print_rule<T: Token>(lang: &Language<T>, rule: &DeriveRule<T>,
-                        h: usize, i: usize, n: usize) -> String {
+fn print_rule<T: Token>(out: &mut String, lang: &Language<T>, rule: &DeriveRule<T>,
+                        h: usize, i: usize, n: usize) {
 
     let mut s = String::new();
 
@@ -100,16 +100,17 @@ fn print_rule<T: Token>(lang: &Language<T>, rule: &DeriveRule<T>,
         write!(&mut s, "•").unwrap();
     }
 
-    let mut out = String::new();
-
-    write!(&mut out, "{:20} [{}, {}] ", s, h, i).unwrap();
-
-    out
+    write!(out, "{:20} [{}, {}] ", s, h, i).unwrap();
 }
 
-pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> bool {
+pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) 
+    -> Result<(bool, String), std::fmt::Error> {
+
     let mut state: ParserState<'_, T> = ParserState { stages: HashMap::new() };
     let n = tokens.len();
+
+    let mut out = String::new();
+    let mut accepts = false;
 
     state.stage(0).push(ParserStep {
         lang,
@@ -118,7 +119,7 @@ pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> b
     });
 
     for i in 0..(1 + n) {
-        println!("\ni = {}", i);
+        writeln!(&mut out, "\ni = {}", i)?;
 
         while state.stage(i).has_next() {
 
@@ -130,24 +131,20 @@ pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> b
                 assert_eq!(step.i, i);
 
                 let rule = lang.get_rule(step.rule);
-                print!("{}\t", print_rule(lang, rule, step.h, i, n));
+                print_rule(&mut out, lang, rule, step.h, i, n);
+                write!(&mut out, "\t")?;
 
                 (step.h, rule.lhs, step.rule, sym_key)
             };
 
             match sym_key.map(|key| lang.symbols[key]) {
                 Some(Symbol::Terminal(sym)) => {
-                    /*
-                        Wczytanie – jeśli istnieje sytuacja A → α•tiβ [h,i] to 
-                        dodaj do zbioru sytuację A → αti•β [h,i+1]
-                     */
-
                     if i == n || sym != tokens[i] {
-                        println!("Dropper");
+                        writeln!(&mut out, "Dropper")?;
                         continue
                     }
                     
-                    println!("Scanner");
+                    writeln!(&mut out, "Scanner")?;
                     state.stage(i + 1).push(ParserStep {
                         lang, 
                         rule: step_rule,
@@ -155,13 +152,8 @@ pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> b
                         i: i + 1,
                     })
                 }
-                Some(Symbol::NonTerminal(sym)) => {
-                    /* 
-                        Przewidywanie – jeśli istnieje sytuacja A → α•Bβ [h,i], 
-                        to dla każdej produkcji B → δ dodaj do zbioru sytuację B → •δ [i,i] 
-                     */
-
-                    println!("Predictor");
+                Some(Symbol::NonTerminal(_)) => {
+                    writeln!(&mut out, "Predictor")?;
                     let sym_key = sym_key.unwrap();
 
                     for (key, _) in &lang.rules[sym_key] {
@@ -175,13 +167,7 @@ pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> b
 
                 }
                 None => {
-                    /* 
-                        Uzupełnianie – jeśli istnieje sytuacja A → α• [h,i], 
-                        to dla każdej sytuacji B → β•Aδ [g,h] dodaj do zbioru 
-                        sytuację B → βA•δ [g,i] 
-                     */
-
-                    println!("Completer");
+                    writeln!(&mut out, "Completer")?;
                     let mut buf = Vec::new();
                     
                     for step in &state.stage(step_h).steps {
@@ -191,7 +177,7 @@ pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> b
                                 rule: step.rule,
                                 h: step.h,
                                 i,
-                            });      
+                            }); 
                         }
                     }
 
@@ -200,10 +186,15 @@ pub fn check<T: Token>(lang: &Language<T>, starting: RuleKey, tokens: &[T]) -> b
                     }
                 }
             };
+
+            if step_h == 0 && i == n && step_rule == starting {
+                writeln!(&mut out, "Accepting!")?;
+                accepts = true;
+            }
         }
     }
 
-    false
+    Ok((accepts, out))
 }
 
 #[cfg(test)]
@@ -228,7 +219,11 @@ mod tests {
 
         println!("{}", lang);
 
-        check(&lang, starting, &['0', '1'][..]);
+        let ret = check(&lang, starting, &['0', '1'][..]);
+        assert!(ret.is_ok());
+        let (accepts, list) = ret.unwrap();
+        println!("{}", list);
+        assert!(accepts);
     }
 
     #[test]
@@ -252,7 +247,11 @@ mod tests {
 
         println!("{}", lang);
 
-        check(&lang, starting, &['a', '+', 'a', '*', 'a'][..]);
+        let ret = check(&lang, starting, &['a', '+', 'a', '*', 'a'][..]);
+        assert!(ret.is_ok());
+        let (accepts, list) = ret.unwrap();
+        println!("{}", list);
+        assert!(accepts);
     }
 
 }
